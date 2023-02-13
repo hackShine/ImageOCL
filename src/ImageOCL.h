@@ -14,4 +14,6 @@ public:
 	virtual ~ImageOCL();
 
 	std::vector<cl::Device> getOCLDevice();
+
+	int add(std::vector<int>& vec1, std::vector<int>& vec2, std::vector<int>& out);
 };
