@@ -1,2 +1,2 @@
 # ImageOCL
-OpenCL image processing ultilities
+OpenCL image processing utilities
