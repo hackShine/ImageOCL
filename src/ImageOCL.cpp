@@ -8,6 +8,7 @@
 
 using namespace std;
 using namespace cl;
+using namespace cv;
 
 ImageOCL::ImageOCL() {
 
@@ -59,25 +60,32 @@ const char* kernelAddVec = "                                                    
 "}                                                                                      \n";
 #else
 const char* kernelAddVec = "\n" \
-"__kernel void vecAdd(  __global int *a,                       \n" \
-"                       __global int *b,                       \n" \
-"                       __global int *c,                       \n" \
-"                       const unsigned int n)                    \n" \
+"__kernel void vecAdd(  __global unsigned char *a,                       \n" \
+"                       __global unsigned char *b,                       \n" \
+"                       __global unsigned char *c,                       \n" \
+"                       const unsigned int n,                   \n" \
+"                       float alpha1,                           \n" \
+"                       float alpha2,                           \n" \
+"                       unsigned int maxVal)                             \n" \
 "{                                                               \n" \
 "    //Get our global thread ID                                  \n" \
 "    int id = get_global_id(0);                                  \n" \
 "                                                                \n" \
 "    //Make sure we do not go out of bounds                      \n" \
-"    if (id < n)                                                 \n" \
-"        c[id] = a[id] + b[id];                                  \n" \
+"    if (id < n)                                                \n" \
+"   {                                                           \n" \
+"       c[id] = alpha1 * a[id] + alpha2 * b[id];                \n"\
+"       if(c[id] > maxVal)                                      \n"\
+"           c[id] = maxVal;                                     \n"\
+"   }                                                           \n" \
 "}                                                               \n" \
 "\n";
 #endif
 
-int ImageOCL::add(vector<int>& vec1, vector<int>& vec2, std::vector<int>& outVec) {
+int ImageOCL::add(vector<uchar_t>& vec1, vector<uchar_t>& vec2, std::vector<uchar_t>& outVec, float alpha1, float alpha2) {
     assert(vec1.size() == vec2.size());
     std::size_t nSamples = vec1.size();
-    std::size_t samplesInBytes = nSamples * sizeof(int);
+    std::size_t samplesInBytes = nSamples * sizeof(uchar_t);
 
     // device I/O buffers
     cl_mem d_vec1;
@@ -85,9 +93,9 @@ int ImageOCL::add(vector<int>& vec1, vector<int>& vec2, std::vector<int>& outVec
     cl_mem d_out;
 
     // host I/O
-    int* h_vec1 = vec1.data();
-    int* h_vec2 = vec2.data();
-    int* h_out = outVec.data();
+    uchar_t* h_vec1 = vec1.data();
+    uchar_t* h_vec2 = vec2.data();
+    uchar_t* h_out = outVec.data();
 
     // set OCL context, queue etc
     cl_platform_id oclPlatform;
@@ -198,6 +206,24 @@ int ImageOCL::add(vector<int>& vec1, vector<int>& vec2, std::vector<int>& outVec
         return -1;
     }
 
+    err = clSetKernelArg(oclKernel, 4, sizeof(float), &alpha1);
+    if (err != CL_SUCCESS) {
+        cout << "Error while setting kernel arg for nSamples" << endl;
+        return -1;
+    }
+
+    err = clSetKernelArg(oclKernel, 5, sizeof(unsigned int), &alpha2);
+    if (err != CL_SUCCESS) {
+        cout << "Error while setting kernel arg for nSamples" << endl;
+        return -1;
+    }
+
+    unsigned int maxVal = 255;
+    err = clSetKernelArg(oclKernel, 6, sizeof(unsigned int), &maxVal);
+    if (err != CL_SUCCESS) {
+        cout << "Error while setting kernel arg for nSamples" << endl;
+        return -1;
+    }
     // Enqueue command to execute the kernel on device
     err = clEnqueueNDRangeKernel(oclCmdQueue, oclKernel, 1, NULL, &globalSize, &localSize, 0, NULL, NULL);
     if (err != CL_SUCCESS) {
@@ -215,4 +241,22 @@ int ImageOCL::add(vector<int>& vec1, vector<int>& vec2, std::vector<int>& outVec
     }
 
     return 0;
+}
+
+cv::Mat ImageOCL::blendImage(cv::Mat& imMat1, cv::Mat& imMat2, cv::Mat& out, float alpha1, float alpha2) {
+    // convert Mat to vector
+    int nChannels = imMat1.channels();
+    int len = imMat1.cols * imMat1.rows * nChannels;
+    unsigned char* im1 = imMat1.data;
+    unsigned char* im2 = imMat2.data;
+
+    vector<uchar_t> imVec1(im1, im1 + len);
+    vector<uchar_t> imVec2(im2, im2 + len);
+    vector<uchar_t> imVec3(len);
+    add(imVec1, imVec2, imVec3, alpha1, alpha2);
+
+    Mat temp = Mat(imMat1.rows, imMat1.cols, CV_8UC3, imVec3.data());
+    temp.copyTo(out);
+
+    return out;
 }
